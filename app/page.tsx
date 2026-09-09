@@ -82,6 +82,20 @@ async function api<T>(
   if (!r.ok) throw new Error(d.error ?? "잠시 후 다시 시도해 주세요.");
   return d;
 }
+type RequestEnvelope = {
+  requestId: string;
+  status: "processing" | "completed" | "failed";
+  result: { text?: string; [key: string]: unknown } | null;
+};
+async function settled(result: RequestEnvelope) {
+  for (let i = 0; result.status === "processing" && i < 50; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    result = await api<RequestEnvelope>("requests/" + result.requestId);
+  }
+  if (result.status === "processing")
+    throw new Error("아직 처리 중이에요. 처리 확인을 눌러 주세요.");
+  return result;
+}
 function Detail({ log }: { log: Exercise }) {
   return (
     <>
@@ -167,6 +181,12 @@ function EditDialog({
     editor.log?.bodyPart ?? "기타",
   );
   const requestId = useRef(crypto.randomUUID());
+  const pendingManual = useRef<{
+    exercise: Exercise;
+    date: string;
+    messageId?: number;
+    requestId: string;
+  } | null>(null);
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
@@ -189,13 +209,22 @@ function EditDialog({
     };
     try {
       if (editor.log) await api("logs/" + editor.log.id, "PATCH", exercise);
-      else
-        await api("logs", "POST", {
+      else {
+        pendingManual.current ??= {
           exercise,
           date: editor.date,
           messageId: editor.messageId,
           requestId: requestId.current,
-        });
+        };
+        const result = await settled(
+          await api<RequestEnvelope>("logs", "POST", pendingManual.current),
+        );
+        if (result.status === "failed") {
+          pendingManual.current = null;
+          requestId.current = crypto.randomUUID();
+          throw new Error(result.result?.text ?? "기록을 완료하지 못했어요.");
+        }
+      }
       await onSaved();
       onClose();
     } catch (e) {
@@ -260,80 +289,87 @@ function EditDialog({
         </>
       ) : (
         <form onSubmit={save}>
-          <p className="muted">{dateLabel(editor.date)}의 운동</p>
-          <label>
-            운동 이름
-            <input
-              name="name"
-              required
-              maxLength={80}
-              defaultValue={editor.log?.name}
-              placeholder="예: 사이드 레터럴 레이즈"
-              autoFocus
-            />
-          </label>
-          <label>
-            운동 부위
-            <select
-              value={part}
-              onChange={(e) => setPart(e.target.value as Exercise["bodyPart"])}
-            >
-              {parts.map((p) => (
-                <option key={p}>{p}</option>
-              ))}
-            </select>
-          </label>
-          {part === "유산소" ? (
+          <fieldset
+            disabled={busy || !!pendingManual.current}
+            className="editor-fields"
+          >
+            <p className="muted">{dateLabel(editor.date)}의 운동</p>
             <label>
-              운동 시간 (분)
+              운동 이름
               <input
-                name="minutes"
-                type="number"
-                min="0.1"
-                max="1440"
-                step="0.1"
+                name="name"
                 required
-                defaultValue={editor.log?.durationMinutes ?? 15}
+                maxLength={80}
+                defaultValue={editor.log?.name}
+                placeholder="예: 사이드 레터럴 레이즈"
+                autoFocus
               />
             </label>
-          ) : (
-            <div className="field-grid">
+            <label>
+              운동 부위
+              <select
+                value={part}
+                onChange={(e) =>
+                  setPart(e.target.value as Exercise["bodyPart"])
+                }
+              >
+                {parts.map((p) => (
+                  <option key={p}>{p}</option>
+                ))}
+              </select>
+            </label>
+            {part === "유산소" ? (
               <label>
-                무게 (kg)
+                운동 시간 (분)
                 <input
-                  name="weight"
+                  name="minutes"
                   type="number"
-                  min="0"
-                  max="2000"
+                  min="0.1"
+                  max="1440"
                   step="0.1"
-                  placeholder="맨몸은 빈칸"
-                  defaultValue={editor.log?.weightKg ?? ""}
-                />
-              </label>
-              <label>
-                횟수
-                <input
-                  name="reps"
-                  type="number"
-                  min="1"
-                  max="10000"
                   required
-                  defaultValue={editor.log?.reps ?? 10}
+                  defaultValue={editor.log?.durationMinutes ?? 15}
                 />
               </label>
-              <label>
-                세트
-                <input
-                  name="sets"
-                  type="number"
-                  min="1"
-                  max="100"
-                  required
-                  defaultValue={editor.log?.sets ?? 1}
-                />
-              </label>
-            </div>
-          )}
+            ) : (
+              <div className="field-grid">
+                <label>
+                  무게 (kg)
+                  <input
+                    name="weight"
+                    type="number"
+                    min="0"
+                    max="2000"
+                    step="0.1"
+                    placeholder="맨몸은 빈칸"
+                    defaultValue={editor.log?.weightKg ?? ""}
+                  />
+                </label>
+                <label>
+                  횟수
+                  <input
+                    name="reps"
+                    type="number"
+                    min="1"
+                    max="10000"
+                    required
+                    defaultValue={editor.log?.reps ?? 10}
+                  />
+                </label>
+                <label>
+                  세트
+                  <input
+                    name="sets"
+                    type="number"
+                    min="1"
+                    max="100"
+                    required
+                    defaultValue={editor.log?.sets ?? 1}
+                  />
+                </label>
+              </div>
+            )}
+          </fieldset>
           <div className="dialog-actions">
             {editor.log && (
               <button
@@ -347,7 +383,11 @@ function EditDialog({
               </button>
             )}
             <button className="primary" type="submit" disabled={busy}>
-              {busy ? "저장 중…" : "저장하기"}
+              {busy
+                ? "저장 중…"
+                : pendingManual.current
+                  ? "처리 확인·재전송"
+                  : "저장하기"}
             </button>
           </div>
         </form>
@@ -474,7 +514,16 @@ export default function Home() {
   const [detail, setDetail] = useState<Summary | null>(null);
   const [exerciseId, setExerciseId] = useState<number | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
-  const retry = useRef<{ message: string; requestId: string } | null>(null);
+  const [unresolved, setUnresolved] = useState<{
+    message: string;
+    requestId: string;
+  } | null>(null);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("workout-request");
+      if (saved) setUnresolved(JSON.parse(saved));
+    } catch {}
+  }, []);
   const sending = useRef(false);
   const load = useCallback(async () => {
     const [s, t] = await Promise.all([
@@ -518,20 +567,32 @@ export default function Home() {
       bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [state?.chat.length, tab, busy]);
   const send = useCallback(
-    async (message: string) => {
+    async (
+      message: string,
+      resume?: { message: string; requestId: string },
+    ) => {
       if (sending.current || !message.trim()) return;
       sending.current = true;
       setBusy(true);
       setError("");
-      const payload =
-        retry.current?.message === message
-          ? retry.current
-          : { message, requestId: crypto.randomUUID() };
-      retry.current = payload;
+      const payload = resume ?? { message, requestId: crypto.randomUUID() };
+      setUnresolved(payload);
       try {
-        await api("chat", "POST", payload);
-        retry.current = null;
+        sessionStorage.setItem("workout-request", JSON.stringify(payload));
+      } catch {}
+      try {
+        const result = await settled(
+          await api<RequestEnvelope>("chat", "POST", payload),
+        );
+        setUnresolved(null);
+        try {
+          sessionStorage.removeItem("workout-request");
+        } catch {}
         setText("");
+        if (result.status === "failed")
+          setError(
+            result.result?.text ?? "원문은 보관했어요. 직접 기록해 주세요.",
+          );
         await load();
       } catch (e) {
         setError((e as Error).message);
@@ -664,10 +725,10 @@ export default function Home() {
                 {state.chat.map((m, i) =>
                   m.type === "summary_card" ? (
                     <div key={m.id}>
-                      {state.summary.logs.length > 0 ? (
+                      {m.date === state.summary.date ? (
                         <SummaryCard
                           data={state.summary}
-                          onEdit={(log) => setEditor({ log, date })}
+                          onEdit={(log) => setEditor({ log, date: log.date })}
                         />
                       ) : (
                         <p className="muted">요약할 운동 기록이 없어요.</p>
@@ -940,7 +1001,7 @@ export default function Home() {
                   </button>
                 </div>
                 {detail?.date === selected ? (
-                  detail.logs.length ? (
+                  detail.logs.length || detail.version > 0 ? (
                     <SummaryCard
                       data={detail}
                       onEdit={(log) => setEditor({ log, date: selected })}
@@ -963,6 +1024,17 @@ export default function Home() {
         )}
       </div>
       <div className="bottom-dock">
+        {unresolved && !busy && (
+          <div className="request-recovery">
+            <span>이전 입력의 처리 결과를 확인해 주세요.</span>
+            <button
+              type="button"
+              onClick={() => void send(unresolved.message, unresolved)}
+            >
+              처리 확인·재전송
+            </button>
+          </div>
+        )}
         {tab === "chat" && (
           <form
             className="composer"
@@ -992,7 +1064,7 @@ export default function Home() {
               className="send-button"
               type="submit"
               aria-label="전송"
-              disabled={busy || !text.trim()}
+              disabled={busy || !!unresolved || !text.trim()}
             >
               <ArrowUp size={22} />
             </button>

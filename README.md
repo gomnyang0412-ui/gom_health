@@ -1,6 +1,6 @@
 # 오늘의 운동
 
-모바일 우선 개인 운동 기록 앱. Next.js App Router, Turso/libSQL, Gemini, Chart.js를 사용합니다. 커밋·푸시·배포는 실행하지 않았습니다.
+모바일 우선 개인 운동 기록 앱. Next.js App Router, Turso/libSQL, Gemini, Chart.js를 사용합니다.
 
 ## 실행
 
@@ -56,3 +56,8 @@ pnpm build
 승인 후 Next.js 프로젝트로 배포하고 서버 환경변수를 입력합니다. 함수 최대 실행 시간은 60초로 선언했습니다. 공개 URL을 아는 사람의 접근을 허용하는 설계입니다. Turso 스키마는 첫 요청에 `CREATE TABLE IF NOT EXISTS`로 초기화합니다. 이미 배포한 스키마를 변경할 때는 별도 마이그레이션이 필요합니다.
 
 참고: [Gemini Function Calling](https://ai.google.dev/gemini-api/docs/function-calling), [Turso TypeScript](https://docs.turso.tech/sdk/ts/reference), [Vercel 함수 실행 시간](https://vercel.com/docs/functions/configuring-functions/duration).
+
+
+## 요청 상태와 요약 개선
+
+요청 상태, 90초 처리 만료 복구, 날짜별 요약, 운영 DB의 추가 마이그레이션과 검증 범위는 [신뢰성 개선 기록](docs/reliability-changes.md)을 참고하세요. 수정·삭제 후에는 수치 갱신 문구를 표시하고, 새로운 `끝` 요청에서만 AI 피드백을 생성합니다.

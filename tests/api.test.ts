@@ -7,10 +7,12 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { GET, POST, PATCH, DELETE } from "../app/api/[...path]/route";
 import { db } from "../lib/db";
-import { today } from "../lib/domain";
+import { today, UPDATED_FEEDBACK } from "../lib/domain";
 test("실제 DB: 채팅, 중복 전송, CRUD, 요약 갱신, 미기록 복구, 달력", async () => {
   const dir = await mkdtemp(join(tmpdir(), "gom-health-test-"));
   process.env.TURSO_DATABASE_URL = pathToFileURL(join(dir, "test.db")).href;
+  process.env.GOM_TEST_MODE = "1";
+  delete process.env.TURSO_AUTH_TOKEN;
   delete process.env.GEMINI_API_KEY;
   async function request(path: string, method = "GET", body?: unknown) {
     const fn =
@@ -36,7 +38,10 @@ test("실제 DB: 채팅, 중복 전송, CRUD, 요약 갱신, 미기록 복구, �
       requestId: crypto.randomUUID(),
       message: "사이드 레터럴 레이즈 25kg x 20",
     };
-    assert.equal((await request("chat", "POST", payload)).data.logged, true);
+    assert.equal(
+      (await request("chat", "POST", payload)).data.result.logged,
+      true,
+    );
     await request("chat", "POST", payload);
     let state = (await request("state")).data;
     assert.equal(state.summary.logs.length, 1);
@@ -63,12 +68,12 @@ test("실제 DB: 채팅, 중복 전송, CRUD, 요약 갱신, 미기록 복구, �
     });
     state = (await request("state")).data;
     assert.equal(state.summary.totalVolumeKg, 1200);
-    assert.equal(state.summary.feedbackText, "");
+    assert.equal(state.summary.feedbackText, UPDATED_FEEDBACK);
     const pending = await request("chat", "POST", {
       requestId: crypto.randomUUID(),
       message: "운동 기록 애매한 입력",
     });
-    assert.equal(pending.data.pending, true);
+    assert.equal(pending.data.result.pending, true);
     state = (await request("state")).data;
     const messageId = state.chat.find(
       (m: { status: string; role: string }) =>
@@ -95,8 +100,8 @@ test("실제 DB: 채팅, 중복 전송, CRUD, 요약 갱신, 미기록 복구, �
           ...manual,
           requestId: crypto.randomUUID(),
         })
-      ).status,
-      409,
+      ).data.status,
+      "failed",
     );
     assert.equal((await request("state")).data.summary.logs.length, 3);
     assert.equal(

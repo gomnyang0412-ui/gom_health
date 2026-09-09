@@ -863,3 +863,22 @@ svg {
 .pending-records strong {
   overflow-wrap: anywhere;
 }
+.request-recovery {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.request-recovery button {
+  color: var(--blue);
+  text-decoration: underline;
+  flex-shrink: 0;
+}
+.editor-fields {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}

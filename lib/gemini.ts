@@ -50,14 +50,14 @@ export async function callGemini(body: object) {
 }
 export async function interpret(
   text: string,
-  names: string[],
+  names: (string | { name: string; bodyPart: string })[],
 ): Promise<{ exercises: Exercise[]; reply: string; pending: boolean }> {
   try {
     const data = await callGemini({
       systemInstruction: {
         parts: [
           {
-            text: `운동 기록 도우미입니다. 지금 메시지에 명시된 완료한 운동만 log_exercise로 기록하세요. 운동명이나 횟수/시간이 부족하면 질문하세요. 추측하거나 이전 메시지에서 가져오지 마세요. 여러 운동은 각각 호출하세요. 유산소는 durationMinutes만 사용하고 reps와 weightKg는 null, sets는 1입니다. 무게를 두 배로 바꾸지 마세요. 기존 운동 이름과 같은 운동이면 정확히 기존 이름을 사용하세요: ${JSON.stringify(names)}. 한국어 존댓말로 간결하게 답하세요.`,
+            text: `운동 기록 도우미입니다. 지금 메시지에 명시된 완료한 운동만 log_exercise로 기록하세요. 운동명이나 횟수/시간이 부족하면 질문하세요. 추측하거나 이전 메시지에서 가져오지 마세요. 여러 운동은 각각 호출하세요. 유산소는 durationMinutes만 사용하고 reps와 weightKg는 null, sets는 1입니다. 무게를 두 배로 바꾸지 마세요. 기존 운동의 띄어쓰기·대소문자·명확한 약칭·영어/한글 표기 차이만 있고 동일한 운동임이 확실할 때만 기존 이름을 정확히 재사용하세요. 장비, 각도, 동작이 다르거나 확신이 없으면 새 이름으로 기록하세요. 이름이 비슷하다는 이유로 합치지 마세요. 근력·맨몸은 durationMinutes=null입니다. 기존 운동 이름과 부위 목록: ${JSON.stringify(names)}. 한국어 존댓말로 간결하게 답하세요.`,
           },
         ],
       },

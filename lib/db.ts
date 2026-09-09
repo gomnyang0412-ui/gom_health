@@ -8,10 +8,19 @@ import {
   type Summary,
   type Exercise,
 } from "./domain";
+import { migrate } from "./migrate";
+import { UPDATED_FEEDBACK } from "./domain";
+export type Executor = Pick<Client, "execute">;
 let client: Client;
 let ready: Promise<unknown> | undefined;
 export async function db() {
   if (!client) {
+    if (
+      process.env.GOM_TEST_MODE === "1" &&
+      (!process.env.TURSO_DATABASE_URL?.startsWith("file:") ||
+        process.env.TURSO_AUTH_TOKEN)
+    )
+      throw new Error("TEST_DATABASE_REQUIRED");
     const url =
       process.env.TURSO_DATABASE_URL ||
       (process.env.VERCEL ? "" : "file:local.db");
@@ -32,6 +41,7 @@ export async function db() {
         ],
         "write",
       )
+      .then(() => migrate(client))
       .catch((e) => {
         ready = undefined;
         throw e;
@@ -39,8 +49,11 @@ export async function db() {
   await ready;
   return client;
 }
-export async function allLogs(date?: string): Promise<Log[]> {
-  const c = await db();
+export async function allLogs(
+  date?: string,
+  executor?: Executor,
+): Promise<Log[]> {
+  const c = executor ?? (await db());
   const r = await c.execute({
     sql: `SELECT l.*,e.name FROM logs l JOIN exercises e ON e.id=l.exercise_id ${date ? "WHERE l.date=?" : ""} ORDER BY l.logged_at,l.id`,
     args: date ? [date] : [],
@@ -62,21 +75,40 @@ export async function allLogs(date?: string): Promise<Log[]> {
 export async function messages(date: string): Promise<Message[]> {
   const c = await db();
   const r = await c.execute({
-    sql: "SELECT * FROM messages WHERE date=? ORDER BY id",
-    args: [date],
+    sql: "SELECT m.*, CASE WHEN EXISTS(SELECT 1 FROM requests r WHERE r.message_id=m.id AND r.status='processing') THEN 'processing' ELSE m.status END AS visible_status FROM messages m WHERE date=? AND (type!='summary_card' OR id=(SELECT MAX(id) FROM messages WHERE date=? AND type='summary_card')) ORDER BY id",
+    args: [date, date],
   });
   return r.rows.map((r) => ({
     id: Number(r.id),
     role: r.role as Message["role"],
     content: String(r.content),
     type: String(r.type),
-    status: String(r.status),
+    status: String(r.visible_status),
     date: String(r.date),
   }));
 }
-export async function summary(date: string): Promise<Summary> {
-  const logs = await allLogs(date);
-  const c = await db();
+export async function summary(
+  date: string,
+  executor?: Executor,
+): Promise<Summary> {
+  if (!executor) {
+    const tx = await (await db()).transaction("read");
+    try {
+      const result = await summary(date, tx);
+      await tx.commit();
+      return result;
+    } finally {
+      tx.close();
+    }
+  }
+  const c = executor;
+  const logs = await allLogs(date, c);
+  const state = (
+    await c.execute({
+      sql: "SELECT * FROM day_state WHERE date=?",
+      args: [date],
+    })
+  ).rows[0];
   const [days, finished] = await Promise.all([
     c.execute("SELECT DISTINCT date FROM logs"),
     c.execute({ sql: "SELECT * FROM summaries WHERE date=?", args: [date] }),
@@ -94,6 +126,7 @@ export async function summary(date: string): Promise<Summary> {
     : 0;
   return {
     date,
+    version: Number(state?.version ?? 0),
     logs,
     totalVolumeKg: logs.reduce((n, l) => n + volume(l), 0),
     totalSets: logs
@@ -105,7 +138,10 @@ export async function summary(date: string): Promise<Summary> {
       days.rows.map((r) => String(r.date)),
       date,
     ),
-    feedbackText: String(finished.rows[0]?.feedback ?? ""),
+    feedbackText:
+      state?.feedback_state === "changed"
+        ? UPDATED_FEEDBACK
+        : String(finished.rows[0]?.feedback ?? ""),
   };
 }
 export function insertLogStatements(
@@ -135,6 +171,16 @@ export function insertLogStatements(
         raw,
         messageId,
       ],
+    },
+    ...invalidateStatements(date),
+  ];
+}
+
+export function invalidateStatements(date: string): InStatement[] {
+  return [
+    {
+      sql: "INSERT INTO day_state(date,version,feedback_state) VALUES(?,1,'changed') ON CONFLICT(date) DO UPDATE SET version=version+1,feedback_state='changed'",
+      args: [date],
     },
     { sql: "UPDATE summaries SET feedback='' WHERE date=?", args: [date] },
   ];

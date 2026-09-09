@@ -27,6 +27,11 @@ export const exerciseSchema = z
     durationMinutes: z.number().positive().max(1440).nullable().default(null),
   })
   .superRefine((v, ctx) => {
+    if (v.bodyPart !== "유산소" && v.durationMinutes !== null)
+      ctx.addIssue({
+        code: "custom",
+        message: "근력·맨몸 운동은 시간을 함께 저장할 수 없어요",
+      });
     if (v.bodyPart === "유산소" ? !v.durationMinutes : !v.reps)
       ctx.addIssue({
         code: "custom",
@@ -61,6 +66,7 @@ export type Message = {
   date: string;
 };
 export type Summary = {
+  version: number;
   date: string;
   totalVolumeKg: number;
   totalSets: number;
@@ -70,6 +76,15 @@ export type Summary = {
   feedbackText: string;
   logs: Log[];
 };
+export const UPDATED_FEEDBACK = "기록이 수정되어 수치가 갱신되었습니다.";
+export function savedReply(logs: Exercise[]) {
+  return logs
+    .map(
+      (l) =>
+        `${l.name} · ${l.bodyPart === "유산소" ? `${l.durationMinutes}분` : `${l.weightKg === null ? "맨몸" : `${l.weightKg}kg`} × ${l.reps}회 · ${l.sets}세트`} 기록했어요.`,
+    )
+    .join("\n");
+}
 export function today(now = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Seoul",
