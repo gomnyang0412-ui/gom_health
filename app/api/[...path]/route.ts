@@ -21,6 +21,7 @@ import {
   UPDATED_FEEDBACK,
 } from "@/lib/domain";
 import { feedback, interpret } from "@/lib/gemini";
+import { reportServerError } from "@/lib/server-errors";
 import {
   beginRequest,
   completeRequest,
@@ -363,6 +364,7 @@ async function handle(req: NextRequest, ctx: Context) {
     }
     return json({ error: "페이지를 찾을 수 없어요." }, 404);
   } catch (e) {
+    reportServerError("api_request", e);
     if (e instanceof RequestConflict) return json({ error: e.message }, 409);
     if (e instanceof z.ZodError)
       return json(

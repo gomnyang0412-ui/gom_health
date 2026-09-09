@@ -9,6 +9,7 @@ import {
   type Exercise,
 } from "./domain";
 import { migrate } from "./migrate";
+import { reportServerError } from "./server-errors";
 import { UPDATED_FEEDBACK } from "./domain";
 export type Executor = Pick<Client, "execute">;
 let client: Client;
@@ -43,6 +44,7 @@ export async function db() {
       )
       .then(() => migrate(client))
       .catch((e) => {
+        reportServerError("db_initialize", e);
         ready = undefined;
         throw e;
       });
